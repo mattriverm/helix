@@ -324,7 +324,7 @@ pub mod util {
         let replacement: Option<Tendril> = if new_text.is_empty() {
             None
         } else {
-            Some(new_text.into())
+            Some(new_text.as_str().into())
         };
 
         let text = doc.slice(..);
@@ -342,9 +342,34 @@ pub mod util {
             selection,
             |range| {
                 let cursor = range.cursor(text);
-                completion_range(text, edit_offset, replace_mode, cursor)
-                    .filter(|(start, end)| text.slice(start..end) == removed_text)
-                    .unwrap_or_else(|| find_completion_range(text, replace_mode, cursor))
+                if let Some(edit_offset) = edit_offset {
+                    if let Some((start, end)) =
+                        completion_range(text, Some(edit_offset), replace_mode, cursor)
+                    {
+                        if text.slice(start..end) == removed_text {
+                            return (start, end);
+                        }
+                    }
+                }
+
+                let (mut start, end) = find_completion_range(text, replace_mode, cursor);
+
+                // If we are forced to calculate the range ourselves,
+                // and if the new text starts with the characters immediately preceding the replacement range,
+                // extend the range to include them. E.g. typing $f, and the LSP sends back `$foo`
+                if !new_text.is_empty() {
+                    let mut check_len = new_text.len().min(start);
+                    while check_len > 0 {
+                        let prefix = &new_text[..check_len];
+                        if text.slice(start - check_len..start) == prefix {
+                            start -= check_len;
+                            break;
+                        }
+                        check_len -= 1;
+                    }
+                }
+
+                (start, end)
             },
             |_, _| replacement.clone(),
         );
